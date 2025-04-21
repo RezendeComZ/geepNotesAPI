@@ -368,4 +368,39 @@ async function emptyTrash() {
     }
 }
 
-module.exports = { getAllNotes, createNotes, findJsonFiles, deleteNote, emptyTrash };
+// --- Delete Empty Group Function ---
+async function deleteEmptyGroup(group) {
+    const notesDir = path.join(__dirname, 'notes');
+    const { safeGroupParts } = sanitizeInput('', group);
+
+    if (safeGroupParts.length === 0) {
+        throw new Error('Invalid group provided for deletion.');
+    }
+
+    const groupPath = path.join(notesDir, ...safeGroupParts);
+
+    try {
+        // Check if the group exists and is empty
+        const entries = await fs.readdir(groupPath);
+        if (entries.length > 0) {
+            throw new Error(`Group "${group}" is not empty and cannot be deleted.`);
+        }
+
+        // Remove the empty group directory
+        await fs.rmdir(groupPath);
+        console.log(`Deleted empty group: ${groupPath}`);
+        return { message: `Group "${group}" deleted successfully.` };
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            // Group not found
+            console.error(`Group not found: ${groupPath}`);
+            throw new Error(`Group "${group}" not found.`);
+        } else {
+            // Other errors
+            console.error(`Error deleting group ${groupPath}:`, error);
+            throw new Error(`Failed to delete group "${group}".`);
+        }
+    }
+}
+
+module.exports = { getAllNotes, createNotes, findJsonFiles, deleteNote, deleteEmptyGroup, emptyTrash };

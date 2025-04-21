@@ -80,24 +80,25 @@ Creates one or more new notes.
 ]
 ```
 
-### Delete Note
+### Delete Note or Group
 
-Moves a specific note to the `trash` directory. The original directory structure within `notes` is preserved inside `trash`.
+Deletes a specific note (moves it to the `trash` directory) or deletes an empty group.
 
 *   **URL:** `/notes`
 *   **Method:** `DELETE`
-*   **Request Body:** JSON object containing the note's identification.
-    *   `title` (string, required): The title of the note to delete.
-    *   `group` (string, optional): The group (subdirectory path) of the note. If the note is in the root `notes` directory, omit this or provide an empty string/null.
+*   **Request Body:** JSON object containing the note's or group's identification.
+    *   `title` (string, optional): The title of the note to delete.
+    *   `group` (string, optional): The group (subdirectory path) to delete. The group must be empty.
+        *   If both `title` and `group` are provided, only the note will be deleted.
 *   **Success Response:**
     *   **Code:** `200 OK`
-    *   **Content:** `{ "message": "Note \"Note Title\" moved to trash successfully." }`
+    *   **Content:** `{ "message": "Note \"Note Title\" moved to trash successfully." }` or `{ "message": "Group \"Group Name\" deleted successfully." }`
 *   **Error Responses:**
-    *   **Code:** `400 Bad Request` <br> **Content:** `{ "message": "Invalid input: Title is required." }`
-    *   **Code:** `404 Not Found` <br> **Content:** `{ "message": "Note with title \"Note Title\" in group \"group/path\" not found." }`
-    *   **Code:** `500 Internal Server Error` <br> **Content:** `{ "message": "Error deleting note" }`
+    *   **Code:** `400 Bad Request` <br> **Content:** `{ "message": "Invalid input: Either title or group is required." }` or `{ "message": "Group is not empty and cannot be deleted." }`
+    *   **Code:** `404 Not Found` <br> **Content:** `{ "message": "Note with title \"Note Title\" in group \"group/path\" not found." }` or `{ "message": "Group \"Group Name\" not found." }`
+    *   **Code:** `500 Internal Server Error` <br> **Content:** `{ "message": "Error deleting note or group" }`
 
-**Example Request Body (Note in root):**
+**Example Request Body (Delete Note):**
 
 ```json
 {
@@ -105,11 +106,10 @@ Moves a specific note to the `trash` directory. The original directory structure
 }
 ```
 
-**Example Request Body (Note in group 'Work/Meetings'):**
+**Example Request Body (Delete Group):**
 
 ```json
 {
-  "title": "Project Alpha Kickoff",
   "group": "Work/Meetings"
 }
 ```
@@ -126,6 +126,35 @@ Permanently deletes all notes and subdirectories within the `trash` directory.
     *   **Content:** `{ "message": "Trash emptied successfully. X note(s) permanently deleted.", "deletedCount": X }`
 *   **Error Responses:**
     *   **Code:** `500 Internal Server Error` <br> **Content:** `{ "message": "Error emptying trash" }`
+
+### Get Statistics
+
+Retrieves statistics about the notes and trash directories.
+
+*   **URL:** `/stats`
+*   **Method:** `GET`
+*   **Request Body:** None
+*   **Success Response:**
+    *   **Code:** `200 OK`
+    *   **Content:**
+        ```json
+        {
+          "noteCount": 15,
+          "groupCount": 3,
+          "emptyGroups": ["Old Projects/Sub Folder", "Temporary"],
+          "trashCount": 5,
+          "notesSize": 102400,
+          "trashSize": 20480
+        }
+        ```
+        *   `noteCount` (number): Total number of notes (JSON files) in the `notes` directory (excluding subdirectories named 'trash').
+        *   `groupCount` (number): Total number of groups (subdirectories) in the `notes` directory (excluding subdirectories named 'trash').
+        *   `emptyGroups` (array of strings): List of relative paths for groups (subdirectories within `notes`) that contain no notes or other non-empty subdirectories.
+        *   `trashCount` (number): Total number of notes (JSON files) in the `trash` directory.
+        *   `notesSize` (number): Total size of the `notes` directory in bytes.
+        *   `trashSize` (number): Total size of the `trash` directory in bytes (0 if it doesn't exist).
+*   **Error Responses:**
+    *   **Code:** `500 Internal Server Error` <br> **Content:** `{ "message": "Error retrieving statistics" }`
 
 ## Running the Server
 

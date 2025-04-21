@@ -2,7 +2,8 @@ require('dotenv').config();
 
 const express = require('express');
 const app = express();
-const { getAllNotes, createNotes, deleteNote, emptyTrash } = require('./model'); // Import emptyTrash
+const { getAllNotes, createNotes, deleteNote, emptyTrash, deleteEmptyGroup } = require('./model'); // Import deleteEmptyGroup
+const { getStats } = require('./stats'); // Import getStats
 
 const PORT = process.env.PORT || 3000; // Provide a default port
 
@@ -53,27 +54,36 @@ app.post('/notes', async (req, res) => {
     }
 });
 
-// Route to delete a note (move to trash)
+// Route to delete a note (move to trash) or delete an empty group
 app.delete('/notes', async (req, res) => {
     const { title, group } = req.body;
 
     // Basic validation
-    if (!title || typeof title !== 'string' || title.trim() === '') {
-        return res.status(400).json({ message: 'Invalid input: Title is required.' });
+    if ((!title || typeof title !== 'string' || title.trim() === '') && (!group || typeof group !== 'string' || group.trim() === '')) {
+        return res.status(400).json({ message: 'Invalid input: Either title or group is required.' });
     }
-    // Group is optional, model handles sanitization if undefined/null
 
     try {
-        const result = await deleteNote(title, group);
-        res.status(200).json(result); // Send success message from model
+        if (title) {
+            // Delete a specific note
+            const result = await deleteNote(title, group);
+            res.status(200).json(result); // Send success message from model
+        } else if (group) {
+            // Delete an empty group
+            const result = await deleteEmptyGroup(group);
+            res.status(200).json(result); // Send success message from model
+        }
     } catch (error) {
-        console.error('Error deleting note:', error);
-        // Check for specific "not found" error from the model
+        console.error('Error deleting note or group:', error);
+        // Check for specific "not found" or "not empty" errors from the model
         if (error.message.includes('not found')) {
             return res.status(404).json({ message: error.message });
         }
+        if (error.message.includes('is not empty')) {
+            return res.status(400).json({ message: error.message });
+        }
         // Generic server error
-        res.status(500).json({ message: 'Error deleting note' });
+        res.status(500).json({ message: 'Error deleting note or group' });
     }
 });
 
@@ -90,6 +100,17 @@ app.delete('/emptyTrash', async (req, res) => {
         }
         // Generic server error
         res.status(500).json({ message: 'Error emptying trash' });
+    }
+});
+
+// Route to get statistics
+app.get('/stats', async (req, res) => {
+    try {
+        const stats = await getStats();
+        res.status(200).json(stats);
+    } catch (error) {
+        console.error('Error getting stats:', error);
+        res.status(500).json({ message: 'Error retrieving statistics' });
     }
 });
 
