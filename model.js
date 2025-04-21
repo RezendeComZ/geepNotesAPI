@@ -27,10 +27,24 @@ async function getAllNotes() {
     // Read each file and create the data structure
     const notesData = await Promise.all(allMdFiles.map(async ({ filePath, group }) => {
         const content = await fs.readFile(filePath, 'utf8');
+        const stats = await fs.stat(filePath); // Get file stats
         const title = path.basename(filePath, '.md'); // Get filename without extension
         // Adjust group if it's the root directory
         const finalGroup = group === '.' ? '' : group;
-        return { title, content, group: finalGroup };
+
+        const noteData = {
+            title,
+            content,
+            group: finalGroup,
+            createdDate: stats.birthtime, // Add created date
+        };
+
+        // Add modified date only if it's different from created date
+        if (stats.mtime.getTime() !== stats.birthtime.getTime()) {
+            noteData.modifiedDate = stats.mtime;
+        }
+
+        return noteData;
     }));
 
     return notesData; // Return the array of notes
