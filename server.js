@@ -2,7 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const app = express();
-const { getAllNotes, createNotes } = require('./model');
+const { getAllNotes, createNotes, deleteNote } = require('./model'); // Import deleteNote
 
 const PORT = process.env.PORT || 3000; // Provide a default port
 
@@ -10,18 +10,20 @@ app.use(express.json()); // Middleware to parse JSON bodies
 
 // Route to get all notes
 app.get('/notes', async (req, res) => {
-    // Extract filters from request body if present
-    const filters = req.body && Object.keys(req.body).length > 0 ? req.body : null;
+    // Extract filters and the delete flag from request body
+    const { delete: viewTrash, ...filters } = req.body || {}; // Default viewTrash to undefined/false
+    const useFilters = filters && Object.keys(filters).length > 0 ? filters : null;
 
     try {
-        // Pass filters to getAllNotes
-        const notesData = await getAllNotes(filters); // Call the function from model.js with filters
+        // Pass filters and viewTrash flag to getAllNotes
+        const notesData = await getAllNotes(useFilters, viewTrash === true); // Pass boolean flag
         res.json(notesData); // Send the array of notes (potentially filtered)
     } catch (error) {
-        console.error('Error reading notes directory or applying filters:', error);
+        console.error('Error reading notes/trash directory or applying filters:', error);
         // Handle specific errors like directory not found
         if (error.code === 'ENOENT') {
-            return res.status(404).json({ message: 'Notes directory not found.' });
+            const dirName = viewTrash === true ? 'trash' : 'notes';
+            return res.status(404).json({ message: `Directory '${dirName}' not found.` });
         }
         // Handle potential date parsing errors during filtering
         if (error instanceof TypeError && error.message.includes('Invalid date')) {
@@ -48,6 +50,30 @@ app.post('/notes', async (req, res) => {
     } catch (error) {
         console.error('Error creating notes:', error);
         res.status(500).json({ message: 'Error creating notes' });
+    }
+});
+
+// Route to delete a note (move to trash)
+app.delete('/notes', async (req, res) => {
+    const { title, group } = req.body;
+
+    // Basic validation
+    if (!title || typeof title !== 'string' || title.trim() === '') {
+        return res.status(400).json({ message: 'Invalid input: Title is required.' });
+    }
+    // Group is optional, model handles sanitization if undefined/null
+
+    try {
+        const result = await deleteNote(title, group);
+        res.status(200).json(result); // Send success message from model
+    } catch (error) {
+        console.error('Error deleting note:', error);
+        // Check for specific "not found" error from the model
+        if (error.message.includes('not found')) {
+            return res.status(404).json({ message: error.message });
+        }
+        // Generic server error
+        res.status(500).json({ message: 'Error deleting note' });
     }
 });
 

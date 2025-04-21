@@ -6,7 +6,7 @@ A simple API for managing notes stored as JSON files.
 
 ### Get All Notes
 
-Retrieves all notes, optionally filtering them based on criteria provided in the request body.
+Retrieves all notes from the `notes` directory, or from the `trash` directory if specified. Optionally filters them based on criteria provided in the request body.
 
 *   **URL:** `/notes`
 *   **Method:** `GET`
@@ -17,12 +17,13 @@ Retrieves all notes, optionally filtering them based on criteria provided in the
     *   `createdAfter` (string): Filter notes created after this date (ISO 8601 or YYYY-MM-DD).
     *   `modifiedBefore` (string): Filter notes modified before this date (ISO 8601 or YYYY-MM-DD).
     *   `modifiedAfter` (string): Filter notes modified after this date (ISO 8601 or YYYY-MM-DD).
+    *   `delete` (boolean): If `true`, retrieves notes from the `trash` directory instead of the `notes` directory. Defaults to `false`.
 *   **Success Response:**
     *   **Code:** `200 OK`
-    *   **Content:** `[ { "title": "Note Title", "content": "Note content...", "createdAt": "...", "modifiedAt": "..." }, ... ]`
+    *   **Content:** `[ { "title": "Note Title", "content": "Note content...", "group": "...", "createdDate": "...", "modifiedDate": "...", "relativePath": "..." }, ... ]`
 *   **Error Responses:**
     *   **Code:** `400 Bad Request` <br> **Content:** `{ "message": "Invalid date format provided in filters. Use ISO 8601 or YYYY-MM-DD." }`
-    *   **Code:** `404 Not Found` <br> **Content:** `{ "message": "Notes directory not found." }`
+    *   **Code:** `404 Not Found` <br> **Content:** `{ "message": "Directory 'notes' not found." }` or `{ "message": "Directory 'trash' not found." }`
     *   **Code:** `500 Internal Server Error` <br> **Content:** `{ "message": "Error retrieving notes" }`
 
 **Example Request Body (Filtering):**
@@ -31,6 +32,23 @@ Retrieves all notes, optionally filtering them based on criteria provided in the
 {
   "title": "meeting",
   "createdAfter": "2023-10-26"
+}
+```
+
+**Example Request Body (Viewing Trash):**
+
+```json
+{
+  "delete": true
+}
+```
+
+**Example Request Body (Filtering Trash):**
+
+```json
+{
+  "delete": true,
+  "title": "report"
 }
 ```
 
@@ -60,6 +78,40 @@ Creates one or more new notes.
     "title": "Meeting Notes"
   }
 ]
+```
+
+### Delete Note
+
+Moves a specific note to the `trash` directory. The original directory structure within `notes` is preserved inside `trash`.
+
+*   **URL:** `/notes`
+*   **Method:** `DELETE`
+*   **Request Body:** JSON object containing the note's identification.
+    *   `title` (string, required): The title of the note to delete.
+    *   `group` (string, optional): The group (subdirectory path) of the note. If the note is in the root `notes` directory, omit this or provide an empty string/null.
+*   **Success Response:**
+    *   **Code:** `200 OK`
+    *   **Content:** `{ "message": "Note \"Note Title\" moved to trash successfully." }`
+*   **Error Responses:**
+    *   **Code:** `400 Bad Request` <br> **Content:** `{ "message": "Invalid input: Title is required." }`
+    *   **Code:** `404 Not Found` <br> **Content:** `{ "message": "Note with title \"Note Title\" in group \"group/path\" not found." }`
+    *   **Code:** `500 Internal Server Error` <br> **Content:** `{ "message": "Error deleting note" }`
+
+**Example Request Body (Note in root):**
+
+```json
+{
+  "title": "Shopping List"
+}
+```
+
+**Example Request Body (Note in group 'Work/Meetings'):**
+
+```json
+{
+  "title": "Project Alpha Kickoff",
+  "group": "Work/Meetings"
+}
 ```
 
 ## Running the Server

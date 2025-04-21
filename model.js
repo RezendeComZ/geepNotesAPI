@@ -39,9 +39,13 @@ function parseDate(dateString) {
     return date;
 }
 
-async function getAllNotes(filters = null) {
-    const notesDir = path.join(__dirname, 'notes'); // Path to the notes directory
-    const allJsonFiles = await findJsonFiles(notesDir, notesDir); // Find all json files recursively
+async function getAllNotes(filters = null, viewTrash = false) {
+    // Determine the directory based on the viewTrash flag
+    const targetDirName = viewTrash ? 'trash' : 'notes';
+    const notesDir = path.join(__dirname, targetDirName); // Path to the notes or trash directory
+
+    // Find all json files recursively, passing the correct base directory
+    const allJsonFiles = await findJsonFiles(notesDir, notesDir); // Use notesDir as both starting and base directory
 
     // Read each file and create the data structure
     let notesData = await Promise.all(allJsonFiles.map(async ({ filePath, group, relativePath }) => {
@@ -254,4 +258,54 @@ async function createNotes(notes) {
     };
 }
 
-module.exports = { getAllNotes, createNotes, findJsonFiles };
+// --- Delete Note Function ---
+async function deleteNote(title, group) {
+    const notesDir = path.join(__dirname, 'notes');
+    const trashDir = path.join(__dirname, 'trash'); // Define trash directory path
+
+    const { safeTitle, safeGroupParts } = sanitizeInput(title, group);
+
+    if (!safeTitle) {
+        throw new Error('Invalid title provided for deletion.');
+    }
+
+    // Determine original path
+    const { targetDir: originalTargetDir, finalGroupPath } = await determineTargetPath(notesDir, safeGroupParts);
+    const originalFilePath = path.join(originalTargetDir, `${safeTitle}.json`);
+
+    // Determine target path in trash
+    const trashTargetPath = path.join(trashDir, finalGroupPath);
+    const trashFilePath = path.join(trashTargetPath, `${safeTitle}.json`);
+
+    try {
+        // Check if the original file exists before attempting to move
+        await fs.access(originalFilePath); // Throws error if file doesn't exist
+
+        // Ensure the target directory in trash exists
+        await fs.mkdir(trashTargetPath, { recursive: true });
+
+        // Move the file
+        await fs.rename(originalFilePath, trashFilePath);
+        console.log(`Moved note "${safeTitle}" from group "${finalGroupPath || '.'}" to trash.`);
+
+        // Optional: Clean up empty directories in 'notes' after moving
+        // This part can be complex and might require careful implementation
+        // to avoid deleting non-empty directories or directories with other files.
+        // For simplicity, it's omitted here.
+
+        return { message: `Note "${safeTitle}" moved to trash successfully.` };
+
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            // File not found at the original path
+            console.error(`Note not found: ${originalFilePath}`);
+            throw new Error(`Note with title "${title}" in group "${group || '.'}" not found.`);
+        } else {
+            // Other errors (permissions, etc.)
+            console.error(`Error moving note ${originalFilePath} to trash:`, error);
+            throw new Error(`Failed to move note "${title}" to trash.`);
+        }
+    }
+}
+
+module.exports = { getAllNotes, createNotes, findJsonFiles, deleteNote };
