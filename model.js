@@ -1,9 +1,9 @@
 const fs = require('fs').promises;
 const path = require('path');
 
-// Recursive function to find all markdown files
-async function findMdFiles(dir, baseDir) {
-    let mdFiles = [];
+// Recursive function to find all JSON files
+async function findJsonFiles(dir, baseDir) {
+    let jsonFiles = [];
     const entries = await fs.readdir(dir, { withFileTypes: true });
 
     for (const entry of entries) {
@@ -14,114 +14,182 @@ async function findMdFiles(dir, baseDir) {
         }
         if (entry.isDirectory()) {
             // Recursively search in subdirectory
-            mdFiles = mdFiles.concat(await findMdFiles(fullPath, baseDir));
-        } else if (entry.isFile() && path.extname(entry.name).toLowerCase() === '.md') {
+            jsonFiles = jsonFiles.concat(await findJsonFiles(fullPath, baseDir));
+        } else if (entry.isFile() && path.extname(entry.name).toLowerCase() === '.json') {
             // Calculate relative path for group
-            const relativePath = path.relative(baseDir, dir);
-            mdFiles.push({ filePath: fullPath, group: relativePath || '.' }); // Use '.' for root notes dir
+            const relativeDirPath = path.relative(baseDir, dir);
+            const relativeFilePath = path.relative(baseDir, fullPath);
+            jsonFiles.push({ filePath: fullPath, group: relativeDirPath || '.', relativePath: relativeFilePath }); // Use '.' for root notes dir
         }
     }
-    return mdFiles;
+    return jsonFiles;
 }
 
 async function getAllNotes() {
     const notesDir = path.join(__dirname, 'notes'); // Path to the notes directory
-    const allMdFiles = await findMdFiles(notesDir, notesDir); // Find all md files recursively
+    const allJsonFiles = await findJsonFiles(notesDir, notesDir); // Find all json files recursively
 
     // Read each file and create the data structure
-    const notesData = await Promise.all(allMdFiles.map(async ({ filePath, group }) => {
-        const content = await fs.readFile(filePath, 'utf8');
-        const stats = await fs.stat(filePath); // Get file stats
-        const title = path.basename(filePath, '.md'); // Get filename without extension
-        // Adjust group if it's the root directory
-        const finalGroup = group === '.' ? '' : group;
+    const notesData = await Promise.all(allJsonFiles.map(async ({ filePath, group, relativePath }) => {
+        try {
+            const fileContent = await fs.readFile(filePath, 'utf8');
+            const jsonData = JSON.parse(fileContent); // Parse the JSON content
+            // Adjust group if it's the root directory
+            const finalGroup = group === '.' ? '' : group;
 
-        const noteData = {
-            title,
-            content,
-            group: finalGroup,
-            createdDate: stats.birthtime, // Add created date
-        };
+            // Get the latest version (first item in the array)
+            const latestVersion = jsonData.versions && jsonData.versions.length > 0 ? jsonData.versions[0] : {};
 
-        // Add modified date only if it's different from created date
-        if (stats.mtime.getTime() !== stats.birthtime.getTime()) {
-            noteData.modifiedDate = stats.mtime;
+            const noteData = {
+                title: jsonData.title, // Use title from JSON root
+                content: latestVersion.content || '', // Get content from the latest version
+                group: finalGroup,
+                createdDate: jsonData.createdDate,
+                modifiedDate: latestVersion.createdDate,
+                relativePath: jsonData.relativePath // Use relativePath from JSON root
+            };
+            return noteData;
+        } catch (error) {
+            console.error(`Error processing note file ${filePath}:`, error);
+            return null; // Skip corrupted or invalid files
         }
-
-        return noteData;
     }));
 
-    return notesData; // Return the array of notes
+    return notesData.filter(note => note !== null); // Filter out any null entries from errors
+}
+
+// --- Helper Functions for createNotes ---
+
+function sanitizeInput(title, group) {
+    const safeTitle = (title || '').trim().replace(/[\/\\?%*:|"<>]/g, '-');
+    const safeGroupParts = (group || '').split(/[\/\\]/).map(part => part.replace(/[\/\\?%*:|"<>.]/g, '-')).filter(Boolean);
+    return { safeTitle, safeGroupParts };
+}
+
+async function determineTargetPath(baseDir, safeGroupParts) {
+    let targetDir = baseDir;
+    let actualPathParts = [];
+
+    if (safeGroupParts.length > 0) {
+        let currentPath = baseDir;
+        for (const part of safeGroupParts) {
+            let foundDirName = null;
+            try {
+                const entries = await fs.readdir(currentPath, { withFileTypes: true });
+                foundDirName = entries.find(entry => entry.isDirectory() && entry.name.toLowerCase() === part.toLowerCase())?.name;
+            } catch (err) {
+                if (err.code !== 'ENOENT') {
+                    console.error(`Error reading directory ${currentPath}:`, err);
+                    // Decide how to handle this - maybe throw or return an error indicator
+                }
+                // If ENOENT, directory doesn't exist, will be created later
+            }
+            const partToUse = foundDirName || part; // Use existing casing or sanitized part
+            actualPathParts.push(partToUse);
+            currentPath = path.join(currentPath, partToUse);
+        }
+        targetDir = path.join(baseDir, ...actualPathParts);
+    }
+
+    const finalGroupPath = actualPathParts.join(path.sep);
+    return { targetDir, finalGroupPath };
+}
+
+async function prepareNoteData(filePath, safeTitle, finalGroupPath, relativePath, content) {
+    const newVersion = {
+        content: content || '',
+        createdDate: new Date().toISOString() // Version creation/modification date
+    };
+
+    try {
+        const existingContent = await fs.readFile(filePath, 'utf8');
+        const noteJsonData = JSON.parse(existingContent);
+
+        if (!Array.isArray(noteJsonData.versions)) {
+            noteJsonData.versions = [];
+        }
+        noteJsonData.versions.unshift(newVersion); // Prepend new version
+        // Ensure root data is consistent (title might change if sanitized differently)
+        noteJsonData.title = safeTitle;
+        noteJsonData.group = finalGroupPath;
+        noteJsonData.relativePath = relativePath;
+        // DO NOT update root createdDate on update
+        console.log(`Prepared update for note: ${filePath}`);
+        return noteJsonData;
+
+    } catch (error) {
+        if (error.code === 'ENOENT' || error instanceof SyntaxError) {
+            // File doesn't exist or is invalid JSON, create new structure
+            console.log(`Prepared new note structure for: ${filePath}`);
+            return {
+                title: safeTitle,
+                group: finalGroupPath,
+                relativePath: relativePath,
+                createdDate: new Date().toISOString(), // Initial note creation date
+                versions: [newVersion]
+            };
+        } else {
+            console.error(`Error reading or parsing note file ${filePath}:`, error);
+            throw error; // Re-throw unexpected errors to be caught by the caller
+        }
+    }
+}
+
+async function writeNoteFile(filePath, noteJsonData) {
+    const jsonContent = JSON.stringify(noteJsonData, null, 2); // Pretty print
+    await fs.writeFile(filePath, jsonContent, 'utf8');
+    console.log(`Successfully wrote note: ${filePath}`);
 }
 
 async function createNotes(notes) {
     const notesDir = path.join(__dirname, 'notes');
-    const processedNotes = []; // Keep track of notes actually processed
+    const processedNotes = [];
+    const skippedNotes = [];
 
     const creationPromises = notes.map(async (note) => {
-        const title = note.title.trim();
-        // Sanitize title to prevent path traversal issues, replace invalid chars
-        const safeTitle = title.replace(/[\/\\?%*:|"<>]/g, '-');
-        const content = note.content || '';
-        const group = note.group || ''; // Default to root notes folder if group is missing or empty
-        // Sanitize group path
-        const safeGroupParts = group.split(/[\/\\]/).map(part => part.replace(/[\/\\?%*:|"<>.]/g, '-')).filter(Boolean);
+        const { safeTitle, safeGroupParts } = sanitizeInput(note.title, note.group);
 
-        // Prevent creation in the 'trash' directory or its subdirectories (case-insensitive check)
+        // Basic validation
+        if (!safeTitle) {
+            console.warn(`Skipping note with empty or invalid title.`);
+            skippedNotes.push(note);
+            return;
+        }
+
+        // Prevent creation in 'trash' directory
         if (safeGroupParts[0]?.toLowerCase() === 'trash') {
-            console.warn(`Skipping creation of note "${title}" in disallowed group: ${group}`);
-            return; // Skip this note
+            console.warn(`Skipping creation/update of note "${safeTitle}" in disallowed group: ${note.group}`);
+            skippedNotes.push(note);
+            return;
         }
 
-        let targetDir = notesDir;
-        let actualPathParts = []; // Store the actual casing parts found or used
+        try {
+            const { targetDir, finalGroupPath } = await determineTargetPath(notesDir, safeGroupParts);
+            const filePath = path.join(targetDir, `${safeTitle}.json`);
+            const relativePath = path.relative(notesDir, filePath);
 
-        // Determine the actual target directory, respecting existing directory casing
-        if (safeGroupParts.length > 0) {
-            let currentPath = notesDir;
-            for (const part of safeGroupParts) {
-                let foundDirName = null;
-                try {
-                    const entries = await fs.readdir(currentPath, { withFileTypes: true });
-                    for (const entry of entries) {
-                        if (entry.isDirectory() && entry.name.toLowerCase() === part.toLowerCase()) {
-                            foundDirName = entry.name; // Found existing directory, use its casing
-                            break;
-                        }
-                    }
-                } catch (err) {
-                    // Ignore ENOENT (directory doesn't exist yet), but log other errors
-                    if (err.code !== 'ENOENT') {
-                        console.error(`Error reading directory ${currentPath}:`, err);
-                        // Depending on desired behavior, might want to return or throw here
-                    }
-                }
+            // Ensure the target directory exists before preparing data
+            await fs.mkdir(targetDir, { recursive: true });
 
-                const partToUse = foundDirName || part; // Use existing name or the sanitized part
-                actualPathParts.push(partToUse);
-                currentPath = path.join(currentPath, partToUse); // Update current path for next iteration
-            }
-            targetDir = path.join(notesDir, ...actualPathParts);
+            const noteJsonData = await prepareNoteData(filePath, safeTitle, finalGroupPath, relativePath, note.content);
+
+            await writeNoteFile(filePath, noteJsonData);
+
+            processedNotes.push({ title: safeTitle, group: finalGroupPath });
+
+        } catch (error) {
+            console.error(`Failed to process note "${note.title || 'Untitled'}" in group "${note.group || ''}":`, error);
+            skippedNotes.push(note); // Track skipped notes due to errors
         }
-
-        const finalGroupPath = actualPathParts.join(path.sep); // Group path with correct casing
-        const filePath = path.join(targetDir, `${safeTitle}.md`);
-
-        // Ensure the directory exists (using the potentially case-corrected path)
-        // The recursive flag handles creating intermediate directories if they don't exist.
-        await fs.mkdir(targetDir, { recursive: true });
-
-        // Write the file
-        await fs.writeFile(filePath, content, 'utf8');
-        console.log(`Created note: ${filePath}`); // Log creation
-        processedNotes.push({ title: safeTitle, group: finalGroupPath }); // Add to processed list with actual group path
-        // Optionally return info about the created note if needed later
-        // return { filePath, title: safeTitle, group: finalGroupPath };
     });
 
     await Promise.all(creationPromises);
-    // Adjust the return message based on actually processed notes
-    return { message: `${processedNotes.length} note(s) processed for creation. ${notes.length - processedNotes.length} skipped.` };
+
+    return {
+        message: `${processedNotes.length} note(s) processed successfully. ${skippedNotes.length} skipped.`,
+        processed: processedNotes,
+        skipped: skippedNotes.map(n => ({ title: n.title, group: n.group })) // Return minimal info for skipped
+    };
 }
 
-module.exports = { getAllNotes, createNotes };
+module.exports = { getAllNotes, createNotes, findJsonFiles };

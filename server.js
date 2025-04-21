@@ -1,19 +1,12 @@
 require('dotenv').config();
 
 const express = require('express');
-const fs = require('fs').promises;
-const path = require('path');
 const app = express();
 const { getAllNotes, createNotes } = require('./model');
 
 const PORT = process.env.PORT || 3000; // Provide a default port
 
 app.use(express.json()); // Middleware to parse JSON bodies
-
-// Example route
-app.get('/', (req, res) => {
-  res.json({ message: 'Hello, world!' });
-});
 
 // Route to get all notes
 app.get('/notes', async (req, res) => {
