@@ -4,7 +4,7 @@ const express = require('express');
 const fs = require('fs').promises;
 const path = require('path');
 const app = express();
-const { getAllNotes, createNotes, deleteNotes, emptyTrash } = require('./model');
+const { getAllNotes, createNotes } = require('./model');
 
 const PORT = process.env.PORT || 3000; // Provide a default port
 
@@ -47,47 +47,6 @@ app.post('/notes', async (req, res) => {
     } catch (error) {
         console.error('Error creating notes:', error);
         res.status(500).json({ message: 'Error creating notes' });
-    }
-});
-
-// Route to delete notes (move to trash)
-app.delete('/notes', async (req, res) => {
-    const notesToDelete = req.body;
-
-    // Basic validation: check if it's an array and if each item has title and group
-    if (!Array.isArray(notesToDelete) || notesToDelete.some(note =>
-        !note ||
-        typeof note.title !== 'string' || note.title.trim() === '' ||
-        typeof note.group !== 'string' // group is mandatory, can be empty string for root
-    )) {
-        return res.status(400).json({ message: 'Invalid input: Expected an array of notes, each with a non-empty title and a group string.' });
-    }
-
-    try {
-        // Call the function from model.js to handle deletion (moving to trash)
-        const result = await deleteNotes(notesToDelete);
-        // Determine appropriate status code based on errors
-        const statusCode = result.errors.length > 0 && result.moved === 0 ? 404 : (result.errors.length > 0 ? 207 : 200); // 207 Multi-Status if partial success
-        res.status(statusCode).json(result);
-
-    } catch (error) {
-        console.error('Error deleting notes:', error);
-        // Handle specific errors like failure to create trash dir
-        if (error.message.includes('Failed to create trash directory')) {
-             return res.status(500).json({ message: 'Server setup error: Could not prepare trash directory.' });
-        }
-        res.status(500).json({ message: 'Error processing delete request' });
-    }
-});
-
-// Route to empty the trash directory
-app.delete('/emptyTrash', async (req, res) => {
-    try {
-        const deletedCount = await emptyTrash();
-        res.status(200).json({ message: `Trash emptied successfully. ${deletedCount} note(s) permanently deleted.` });
-    } catch (error) {
-        console.error('Error emptying trash:', error);
-        res.status(500).json({ message: `Error emptying trash: ${error.message}` });
     }
 });
 
