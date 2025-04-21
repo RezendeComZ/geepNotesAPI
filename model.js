@@ -36,4 +36,34 @@ async function getAllNotes() {
     return notesData; // Return the array of notes
 }
 
-module.exports = { getAllNotes };
+async function createNotes(notes) {
+    const notesDir = path.join(__dirname, 'notes');
+
+    const creationPromises = notes.map(async (note) => {
+        const title = note.title.trim();
+        // Sanitize title to prevent path traversal issues, replace invalid chars
+        const safeTitle = title.replace(/[\/\\?%*:|"<>]/g, '-');
+        const content = note.content || '';
+        const group = note.group || ''; // Default to root notes folder if group is missing or empty
+        // Sanitize group path
+        const safeGroup = group.split(/[\/\\]/).map(part => part.replace(/[\/\\?%*:|"<>.]/g, '-')).filter(Boolean).join(path.sep);
+
+        const targetDir = path.join(notesDir, safeGroup);
+        const filePath = path.join(targetDir, `${safeTitle}.md`);
+
+        // Ensure the directory exists
+        await fs.mkdir(targetDir, { recursive: true });
+
+        // Write the file
+        await fs.writeFile(filePath, content, 'utf8');
+        console.log(`Created note: ${filePath}`); // Log creation
+        // Optionally return info about the created note if needed later
+        // return { filePath, title: safeTitle, group: safeGroup };
+    });
+
+    await Promise.all(creationPromises);
+    // Return value indicating success or details if needed
+    return { message: `${notes.length} note(s) processed for creation.` };
+}
+
+module.exports = { getAllNotes, createNotes };
