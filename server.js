@@ -10,14 +10,22 @@ app.use(express.json()); // Middleware to parse JSON bodies
 
 // Route to get all notes
 app.get('/notes', async (req, res) => {
+    // Extract filters from request body if present
+    const filters = req.body && Object.keys(req.body).length > 0 ? req.body : null;
+
     try {
-        const notesData = await getAllNotes(); // Call the function from model.js
-        res.json(notesData); // Send the array of notes
+        // Pass filters to getAllNotes
+        const notesData = await getAllNotes(filters); // Call the function from model.js with filters
+        res.json(notesData); // Send the array of notes (potentially filtered)
     } catch (error) {
-        console.error('Error reading notes directory:', error);
+        console.error('Error reading notes directory or applying filters:', error);
         // Handle specific errors like directory not found
         if (error.code === 'ENOENT') {
             return res.status(404).json({ message: 'Notes directory not found.' });
+        }
+        // Handle potential date parsing errors during filtering
+        if (error instanceof TypeError && error.message.includes('Invalid date')) {
+             return res.status(400).json({ message: 'Invalid date format provided in filters. Use ISO 8601 or YYYY-MM-DD.' });
         }
         res.status(500).json({ message: 'Error retrieving notes' });
     }

@@ -25,12 +25,26 @@ async function findJsonFiles(dir, baseDir) {
     return jsonFiles;
 }
 
-async function getAllNotes() {
+// Helper function to safely parse date strings (ISO or YYYY-MM-DD)
+function parseDate(dateString) {
+    if (!dateString) return null;
+    // Check for YYYY-MM-DD format and append time for consistent parsing
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+        dateString += 'T00:00:00.000Z'; // Assume UTC start of day
+    }
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) {
+        throw new TypeError(`Invalid date format: ${dateString}. Use ISO 8601 or YYYY-MM-DD.`);
+    }
+    return date;
+}
+
+async function getAllNotes(filters = null) {
     const notesDir = path.join(__dirname, 'notes'); // Path to the notes directory
     const allJsonFiles = await findJsonFiles(notesDir, notesDir); // Find all json files recursively
 
     // Read each file and create the data structure
-    const notesData = await Promise.all(allJsonFiles.map(async ({ filePath, group, relativePath }) => {
+    let notesData = await Promise.all(allJsonFiles.map(async ({ filePath, group, relativePath }) => {
         try {
             const fileContent = await fs.readFile(filePath, 'utf8');
             const jsonData = JSON.parse(fileContent); // Parse the JSON content
@@ -55,7 +69,55 @@ async function getAllNotes() {
         }
     }));
 
-    return notesData.filter(note => note !== null); // Filter out any null entries from errors
+    notesData = notesData.filter(note => note !== null); // Filter out any null entries from errors
+
+    // Apply filters if provided
+    if (filters) {
+        const { groups, createdBefore, createdAfter, titles } = filters;
+
+        // Parse dates safely
+        const beforeDate = parseDate(createdBefore);
+        const afterDate = parseDate(createdAfter);
+
+        notesData = notesData.filter(note => {
+            let keep = true;
+
+            // Filter by groups (case-sensitive match with note.group)
+            if (keep && groups && Array.isArray(groups) && groups.length > 0) {
+                // Normalize group names in the filter list if necessary (e.g., handle path separators)
+                const normalizedFilterGroups = groups.map(g => g.replace(/[\\/]/g, path.sep));
+                keep = normalizedFilterGroups.includes(note.group);
+            }
+
+            // Filter by createdDate (using parsed dates)
+            if (keep && note.createdDate) {
+                const noteCreatedDate = new Date(note.createdDate);
+                if (isNaN(noteCreatedDate.getTime())) {
+                    console.warn(`Skipping date filter for note "${note.title}" due to invalid createdDate: ${note.createdDate}`);
+                } else {
+                    if (beforeDate && noteCreatedDate >= beforeDate) {
+                        keep = false;
+                    }
+                    if (keep && afterDate && noteCreatedDate <= afterDate) {
+                        keep = false;
+                    }
+                }
+            } else if (keep && (beforeDate || afterDate)) {
+                // If filtering by date but note has no valid createdDate, exclude it
+                keep = false;
+            }
+
+            // Filter by titles (case-insensitive partial match)
+            if (keep && titles && Array.isArray(titles) && titles.length > 0) {
+                const noteTitleLower = note.title.toLowerCase();
+                keep = titles.some(filterTitle => noteTitleLower.includes(filterTitle.toLowerCase()));
+            }
+
+            return keep;
+        });
+    }
+
+    return notesData;
 }
 
 // --- Helper Functions for createNotes ---
