@@ -308,4 +308,64 @@ async function deleteNote(title, group) {
     }
 }
 
-module.exports = { getAllNotes, createNotes, findJsonFiles, deleteNote };
+// --- Empty Trash Function ---
+async function emptyTrash() {
+    const trashDir = path.join(__dirname, 'trash');
+    let deletedCount = 0;
+
+    try {
+        // Check if trash directory exists
+        try {
+            await fs.access(trashDir);
+        } catch (accessError) {
+            if (accessError.code === 'ENOENT') {
+                console.log('Trash directory does not exist. Nothing to empty.');
+                return { message: 'Trash directory is already empty.', deletedCount: 0 };
+            }
+            throw accessError; // Re-throw other access errors
+        }
+
+        // Helper function to recursively count JSON files
+        async function countJsonFilesRecursive(dir) {
+            let count = 0;
+            try {
+                const entries = await fs.readdir(dir, { withFileTypes: true });
+                for (const entry of entries) {
+                    const entryPath = path.join(dir, entry.name);
+                    if (entry.isDirectory()) {
+                        count += await countJsonFilesRecursive(entryPath);
+                    } else if (entry.isFile() && path.extname(entry.name).toLowerCase() === '.json') {
+                        count++;
+                    }
+                }
+            } catch (readErr) {
+                // Ignore errors reading subdirectories if they were somehow removed concurrently
+                console.warn(`Warning: Could not fully read directory ${dir} during count: ${readErr.message}`);
+            }
+            return count;
+        }
+
+        // Count all JSON files before deleting
+        deletedCount = await countJsonFilesRecursive(trashDir);
+
+        // Remove the entire trash directory and its contents
+        await fs.rm(trashDir, { recursive: true, force: true });
+        console.log(`Removed trash directory: ${trashDir}`);
+
+        // Optional: Recreate the empty trash directory if desired
+        // await fs.mkdir(trashDir, { recursive: true });
+        // console.log(`Recreated empty trash directory: ${trashDir}`);
+
+
+        console.log(`Emptied trash. Deleted ${deletedCount} note files.`);
+        return { message: `Trash emptied successfully. ${deletedCount} note(s) permanently deleted.`, deletedCount };
+
+    } catch (error) {
+        console.error('Error emptying trash directory:', error);
+        // Avoid throwing generic 'Failed to empty trash' if count succeeded but rm failed partially
+        // The error from fs.rm will be more specific.
+        throw error;
+    }
+}
+
+module.exports = { getAllNotes, createNotes, findJsonFiles, deleteNote, emptyTrash };

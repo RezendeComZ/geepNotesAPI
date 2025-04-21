@@ -2,7 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const app = express();
-const { getAllNotes, createNotes, deleteNote } = require('./model'); // Import deleteNote
+const { getAllNotes, createNotes, deleteNote, emptyTrash } = require('./model'); // Import emptyTrash
 
 const PORT = process.env.PORT || 3000; // Provide a default port
 
@@ -10,8 +10,8 @@ app.use(express.json()); // Middleware to parse JSON bodies
 
 // Route to get all notes
 app.get('/notes', async (req, res) => {
-    // Extract filters and the delete flag from request body
-    const { delete: viewTrash, ...filters } = req.body || {}; // Default viewTrash to undefined/false
+    // Extract filters and the deleted flag from request body
+    const { deleted: viewTrash, ...filters } = req.body || {}; // Default viewTrash to undefined/false
     const useFilters = filters && Object.keys(filters).length > 0 ? filters : null;
 
     try {
@@ -74,6 +74,22 @@ app.delete('/notes', async (req, res) => {
         }
         // Generic server error
         res.status(500).json({ message: 'Error deleting note' });
+    }
+});
+
+// Route to empty the trash
+app.delete('/emptyTrash', async (req, res) => {
+    try {
+        const result = await emptyTrash();
+        res.status(200).json(result); // Send success message and count
+    } catch (error) {
+        console.error('Error emptying trash:', error);
+        // Check for specific "not found" error (though handled in model now)
+        if (error.message.includes('not found')) {
+             return res.status(404).json({ message: error.message });
+        }
+        // Generic server error
+        res.status(500).json({ message: 'Error emptying trash' });
     }
 });
 

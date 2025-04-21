@@ -17,7 +17,7 @@ Retrieves all notes from the `notes` directory, or from the `trash` directory if
     *   `createdAfter` (string): Filter notes created after this date (ISO 8601 or YYYY-MM-DD).
     *   `modifiedBefore` (string): Filter notes modified before this date (ISO 8601 or YYYY-MM-DD).
     *   `modifiedAfter` (string): Filter notes modified after this date (ISO 8601 or YYYY-MM-DD).
-    *   `delete` (boolean): If `true`, retrieves notes from the `trash` directory instead of the `notes` directory. Defaults to `false`.
+    *   `deleted` (boolean): If `true`, retrieves notes from the `trash` directory instead of the `notes` directory. Defaults to `false`.
 *   **Success Response:**
     *   **Code:** `200 OK`
     *   **Content:** `[ { "title": "Note Title", "content": "Note content...", "group": "...", "createdDate": "...", "modifiedDate": "...", "relativePath": "..." }, ... ]`
@@ -39,7 +39,7 @@ Retrieves all notes from the `notes` directory, or from the `trash` directory if
 
 ```json
 {
-  "delete": true
+  "deleted": true
 }
 ```
 
@@ -47,7 +47,7 @@ Retrieves all notes from the `notes` directory, or from the `trash` directory if
 
 ```json
 {
-  "delete": true,
+  "deleted": true,
   "title": "report"
 }
 ```
@@ -113,6 +113,19 @@ Moves a specific note to the `trash` directory. The original directory structure
   "group": "Work/Meetings"
 }
 ```
+
+### Empty Trash
+
+Permanently deletes all notes and subdirectories within the `trash` directory.
+
+*   **URL:** `/emptyTrash`
+*   **Method:** `DELETE`
+*   **Request Body:** None
+*   **Success Response:**
+    *   **Code:** `200 OK`
+    *   **Content:** `{ "message": "Trash emptied successfully. X note(s) permanently deleted.", "deletedCount": X }`
+*   **Error Responses:**
+    *   **Code:** `500 Internal Server Error` <br> **Content:** `{ "message": "Error emptying trash" }`
 
 ## Running the Server
 
