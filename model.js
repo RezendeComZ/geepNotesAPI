@@ -8,6 +8,10 @@ async function findMdFiles(dir, baseDir) {
 
     for (const entry of entries) {
         const fullPath = path.join(dir, entry.name);
+        // Skip the trash directory at the root level
+        if (entry.isDirectory() && entry.name === 'trash' && dir === baseDir) {
+            continue; // Skip the trash directory
+        }
         if (entry.isDirectory()) {
             // Recursively search in subdirectory
             mdFiles = mdFiles.concat(await findMdFiles(fullPath, baseDir));
@@ -52,6 +56,7 @@ async function getAllNotes() {
 
 async function createNotes(notes) {
     const notesDir = path.join(__dirname, 'notes');
+    const processedNotes = []; // Keep track of notes actually processed
 
     const creationPromises = notes.map(async (note) => {
         const title = note.title.trim();
@@ -60,24 +65,171 @@ async function createNotes(notes) {
         const content = note.content || '';
         const group = note.group || ''; // Default to root notes folder if group is missing or empty
         // Sanitize group path
-        const safeGroup = group.split(/[\/\\]/).map(part => part.replace(/[\/\\?%*:|"<>.]/g, '-')).filter(Boolean).join(path.sep);
+        const safeGroupParts = group.split(/[\/\\]/).map(part => part.replace(/[\/\\?%*:|"<>.]/g, '-')).filter(Boolean);
 
-        const targetDir = path.join(notesDir, safeGroup);
+        // Prevent creation in the 'trash' directory or its subdirectories (case-insensitive check)
+        if (safeGroupParts[0]?.toLowerCase() === 'trash') {
+            console.warn(`Skipping creation of note "${title}" in disallowed group: ${group}`);
+            return; // Skip this note
+        }
+
+        let targetDir = notesDir;
+        let actualPathParts = []; // Store the actual casing parts found or used
+
+        // Determine the actual target directory, respecting existing directory casing
+        if (safeGroupParts.length > 0) {
+            let currentPath = notesDir;
+            for (const part of safeGroupParts) {
+                let foundDirName = null;
+                try {
+                    const entries = await fs.readdir(currentPath, { withFileTypes: true });
+                    for (const entry of entries) {
+                        if (entry.isDirectory() && entry.name.toLowerCase() === part.toLowerCase()) {
+                            foundDirName = entry.name; // Found existing directory, use its casing
+                            break;
+                        }
+                    }
+                } catch (err) {
+                    // Ignore ENOENT (directory doesn't exist yet), but log other errors
+                    if (err.code !== 'ENOENT') {
+                        console.error(`Error reading directory ${currentPath}:`, err);
+                        // Depending on desired behavior, might want to return or throw here
+                    }
+                }
+
+                const partToUse = foundDirName || part; // Use existing name or the sanitized part
+                actualPathParts.push(partToUse);
+                currentPath = path.join(currentPath, partToUse); // Update current path for next iteration
+            }
+            targetDir = path.join(notesDir, ...actualPathParts);
+        }
+
+        const finalGroupPath = actualPathParts.join(path.sep); // Group path with correct casing
         const filePath = path.join(targetDir, `${safeTitle}.md`);
 
-        // Ensure the directory exists
+        // Ensure the directory exists (using the potentially case-corrected path)
+        // The recursive flag handles creating intermediate directories if they don't exist.
         await fs.mkdir(targetDir, { recursive: true });
 
         // Write the file
         await fs.writeFile(filePath, content, 'utf8');
         console.log(`Created note: ${filePath}`); // Log creation
+        processedNotes.push({ title: safeTitle, group: finalGroupPath }); // Add to processed list with actual group path
         // Optionally return info about the created note if needed later
-        // return { filePath, title: safeTitle, group: safeGroup };
+        // return { filePath, title: safeTitle, group: finalGroupPath };
     });
 
     await Promise.all(creationPromises);
-    // Return value indicating success or details if needed
-    return { message: `${notes.length} note(s) processed for creation.` };
+    // Adjust the return message based on actually processed notes
+    return { message: `${processedNotes.length} note(s) processed for creation. ${notes.length - processedNotes.length} skipped.` };
 }
 
-module.exports = { getAllNotes, createNotes };
+async function deleteNotes(notesToDelete) {
+    const notesDir = path.join(__dirname, 'notes');
+    const trashDir = path.join(notesDir, 'trash');
+    let movedCount = 0;
+    const errors = [];
+
+    // Ensure the trash directory exists
+    try {
+        await fs.mkdir(trashDir, { recursive: true });
+    } catch (error) {
+        console.error(`Error creating trash directory: ${trashDir}`, error);
+        // If trash dir creation fails, we cannot proceed safely
+        throw new Error(`Failed to create trash directory at ${trashDir}`);
+    }
+
+    const deletionPromises = notesToDelete.map(async (note) => {
+        const title = note.title.trim();
+        // Sanitize title similar to createNotes
+        const safeTitle = title.replace(/[\/\\?%*:|"<>]/g, '-');
+        const group = note.group || ''; // Group can be empty for root
+        // Sanitize group path similar to createNotes
+        const safeGroup = group.split(/[\/\\]/).map(part => part.replace(/[\/\\?%*:|"<>.]/g, '-')).filter(Boolean).join(path.sep);
+
+        const sourceDir = path.join(notesDir, safeGroup);
+        const sourceFilePath = path.join(sourceDir, `${safeTitle}.md`);
+
+        const targetTrashDir = path.join(trashDir, safeGroup);
+        // Always generate a new name with a timestamp
+        const timestamp = Date.now();
+        const ext = '.md'; // Extension is known
+        const baseName = safeTitle; // Use the sanitized title as the base
+        const newFileName = `${baseName}_${timestamp}${ext}`;
+        const targetFilePath = path.join(targetTrashDir, newFileName);
+
+        try {
+            // Ensure the target directory within trash exists
+            await fs.mkdir(targetTrashDir, { recursive: true });
+
+            // Attempt to move the file with the new timestamped name
+            await fs.rename(sourceFilePath, targetFilePath);
+            console.log(`Moved note to trash: ${sourceFilePath} -> ${targetFilePath}`);
+            movedCount++;
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                console.warn(`Note not found for deletion: ${sourceFilePath}`);
+                errors.push({ title: note.title, group: note.group, error: 'Not found' });
+            } else {
+                console.error(`Error moving note to trash: ${sourceFilePath}`, error);
+                errors.push({ title: note.title, group: note.group, error: `Move failed: ${error.message}` });
+            }
+        }
+    });
+
+    await Promise.all(deletionPromises);
+
+    return {
+        message: `${movedCount} note(s) moved to trash. ${errors.length} error(s) occurred.`,
+        moved: movedCount,
+        errors: errors
+    };
+}
+
+async function emptyTrash() {
+    const notesDir = path.join(__dirname, 'notes');
+    const trashDir = path.join(notesDir, 'trash');
+    let deletedCount = 0;
+
+    try {
+        // Check if trash directory exists
+        await fs.access(trashDir);
+    } catch (error) {
+        // If trash directory doesn't exist, nothing to delete
+        if (error.code === 'ENOENT') {
+            console.log('Nothing to empty.');
+            return 0;
+        }
+        // Rethrow other access errors
+        console.error(`Error accessing trash directory: ${trashDir}`, error);
+        throw new Error(`Failed to access trash directory: ${error.message}`);
+    }
+
+    try {
+        // Read directory contents to count files before deleting
+        const readAndDelete = async (dir) => {
+            const entries = await fs.readdir(dir, { withFileTypes: true });
+            for (const entry of entries) {
+                const fullPath = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    await readAndDelete(fullPath); // Recurse into subdirectories
+                } else if (entry.isFile() && entry.name.endsWith('.md')) {
+                    deletedCount++; // Count markdown files as notes
+                }
+            }
+        };
+
+        await readAndDelete(trashDir); // Count files first
+
+        // Delete the entire trash directory and its contents
+        await fs.rm(trashDir, { recursive: true, force: true });
+        console.log(`Trash directory emptied: ${trashDir}`);
+        return deletedCount;
+
+    } catch (error) {
+        console.error(`Error emptying trash directory: ${trashDir}`, error);
+        throw new Error(`Failed to empty trash: ${error.message}`);
+    }
+}
+
+module.exports = { getAllNotes, createNotes, deleteNotes, emptyTrash };
